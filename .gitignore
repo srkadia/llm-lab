@@ -1,0 +1,15 @@
+docs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
