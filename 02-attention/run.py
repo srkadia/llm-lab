@@ -2,8 +2,8 @@
 why does attention divide the scores by sqrt(d)?
 compares no scaling, / sqrt(d) and / d, at init and in a small training test.
 
-python run.py           full run, ~8 min on a laptop cpu
-python run.py --quick   skips the d=512 training runs, ~3 min
+python run.py           full run, ~10 min on a laptop cpu
+python run.py --quick   skips the d=512 training runs, ~5 min
 writes figures/sqrt_d.png
 """
 
@@ -29,6 +29,12 @@ SCALES = {
     '÷d': (lambda d: 1 / d, '#1baf7a', ':'),
 }
 
+# control for the training part: no scaling, but Wq/Wk start d**-0.25 smaller, so the scores
+# start out exactly like ÷√d (std ~1, not saturated). if saturation at init was why the lr window
+# shrinks, this one's window shouldn't shrink. (it does, see the README)
+CONTROL = 'no scaling, small init'
+CONTROL_COLOR = '#eda100'
+
 def softmax_np(z):
     z = z - z.max(axis=-1, keepdims=True)
     e = np.exp(z)
@@ -38,7 +44,7 @@ def softmax_np(z):
 # part 1: what happens at init, no training
 
 def measure_init(dims, T=32, trials=2000, chunk=250, seed=0):
-    # 2000 queries per point. with 300 the median grad at d=1024 moved ~2.5x between seeds
+    # 2000 queries per point. with 300 the median grad at d=1024 moved ~7x between seeds (~2.5x with 2000)
     rng = np.random.default_rng(seed)
     res = {name: {'std': [], 'entropy': [], 'max_w': [], 'grad': []} for name in SCALES}
     for d in dims:
@@ -70,10 +76,10 @@ def measure_init(dims, T=32, trials=2000, chunk=250, seed=0):
 # task: 16 random tokens, the query is an exact copy of one of them, the head has to
 # learn Wq/Wk so that the copy gets the attention. plain sgd on purpose
 
-def train_retrieval(d, scale, lr, steps=300, B=32, T=16, seed=0):
+def train_retrieval(d, scale, lr, init_mult=1.0, steps=300, B=32, T=16, seed=0):
     r = np.random.default_rng(seed)
-    Wq = Tensor(r.standard_normal((d, d)) / np.sqrt(d))
-    Wk = Tensor(r.standard_normal((d, d)) / np.sqrt(d))
+    Wq = Tensor(r.standard_normal((d, d)) / np.sqrt(d) * init_mult)
+    Wk = Tensor(r.standard_normal((d, d)) / np.sqrt(d) * init_mult)
     data = np.random.default_rng(seed + 1)
     accs = []
     for _ in range(steps):
@@ -121,20 +127,22 @@ def plot(dims, init, results, train_dims):
     ax1.set_ylim(-0.03, 1.05)
     ax1.set_ylabel('attention entropy (1 = uniform, 0 = one token)')
     ax1.set_title('(a) At init: how spread out is attention?', loc='left')
-    ax1.legend(loc='center left', fontsize=9)
+    ax1.legend(loc='center right', fontsize=9)
     ax2.set_yscale('log')
     ax2.set_ylabel('gradient reaching the scores (median)')
     ax2.set_title('(b) At init: learning signal through softmax', loc='left')
 
-    offsets = {'÷√d': 0.0, 'no scaling': -0.18, '÷d': 0.18}
-    for name, (_, color, _) in SCALES.items():
+    # control goes last so it sits next to ÷d, not next to no scaling (orange/yellow are hard to tell apart)
+    offsets = {'no scaling': -0.27, '÷√d': -0.09, '÷d': 0.09, CONTROL: 0.27}
+    colors = {name: c for name, (_, c, _) in SCALES.items()} | {CONTROL: CONTROL_COLOR}
+    for name, color in colors.items():
         labeled = False
         for i, d in enumerate(train_dims):
             w = lr_window(results[d, name]) if (d, name) in results else None
             if w is None:
                 continue
             x = i + offsets[name]
-            ax3.plot([x, x], [w[0], w[1]], color=color, lw=6, solid_capstyle='round',
+            ax3.plot([x, x], [w[0], w[1]], color=color, lw=5, solid_capstyle='round',
                      label=None if labeled else name)
             labeled = True
     ax3.set_yscale('log')
@@ -143,11 +151,12 @@ def plot(dims, init, results, train_dims):
     ax3.set_xlabel('head size d')
     ax3.set_ylabel('learning rates that train (≥ 95% accuracy)')
     ax3.set_title('(c) Training: which learning rates work?', loc='left')
-    ax3.legend(loc='upper left', fontsize=9)
+    ax3.legend(loc='upper center', bbox_to_anchor=(0.5, -0.17), ncol=2, fontsize=9) # below, 4 entries cover the bars otherwise
     if (train_dims[-1], '÷d') not in results:
-        ax3.text(len(train_dims) - 1 + 0.2, 8, f'÷d not run\nat d = {train_dims[-1]}', color=MUTED, fontsize=8, ha='left')
+        ax3.text(len(train_dims) - 1 + 0.15, 8, f'÷d and control\nnot run at d = {train_dims[-1]}',
+                 color=MUTED, fontsize=8, ha='left')
 
-    fig.suptitle('Without √d, attention saturates as heads grow, and the usable learning rate shrinks',
+    fig.suptitle('Without √d, attention saturates and the usable learning rate shrinks as heads grow',
                  x=0.01, ha='left', fontsize=12)
     plt.tight_layout()
     OUT.parent.mkdir(exist_ok=True)
@@ -171,7 +180,7 @@ if __name__ == '__main__':
                   f"  max weight {r['max_w'][i]:.2f}  grad {r['grad'][i]:.1e}")
 
     lrs = [0.03, 0.1, 0.3, 1, 3, 10, 30, 100]
-    runs = [(d, name) for d in [16, 64, 256] for name in SCALES]
+    runs = [(d, name) for d in [16, 64, 256] for name in list(SCALES) + [CONTROL]]
     if not args.quick:
         runs += [(512, 'no scaling'), (512, '÷√d')] # 512 is slow, only the two that matter most
     train_dims = [16, 64, 256] + ([] if args.quick else [512])
@@ -181,17 +190,21 @@ if __name__ == '__main__':
     t0 = time.perf_counter()
     for d, name in runs:
         grid = lrs[:6] if d == 512 else lrs
-        results[d, name] = {lr: train_retrieval(d, SCALES[name][0](d), lr) for lr in grid}
+        if name == CONTROL:
+            scale, init_mult = 1.0, d**-0.25
+        else:
+            scale, init_mult = SCALES[name][0](d), 1.0
+        results[d, name] = {lr: train_retrieval(d, scale, lr, init_mult) for lr in grid}
         accs = '  '.join(f"{lr:g}:{a:.2f}" for lr, a in results[d, name].items())
-        print(f"  d={d:4d} {name:11s} {accs}   [{time.perf_counter() - t0:.0f}s]", flush=True)
+        print(f"  d={d:4d} {name:22s} {accs}   [{time.perf_counter() - t0:.0f}s]", flush=True)
 
     print("\nlearning rates that reach >= 95%")
-    for name in SCALES:
+    for name in list(SCALES) + [CONTROL]:
         row = []
         for d in train_dims:
             w = lr_window(results[d, name]) if (d, name) in results else None
             row.append('-' if (d, name) not in results else (f"{w[0]:g}-{w[1]:g}" if w else 'none'))
-        print(f"  {name:11s} " + "  ".join(f"d={d}: {c:10s}" for d, c in zip(train_dims, row)))
+        print(f"  {name:22s} " + "  ".join(f"d={d}: {c:10s}" for d, c in zip(train_dims, row)))
 
     plot(dims, init, results, train_dims)
     print(f"\nsaved {OUT}")

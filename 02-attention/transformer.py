@@ -82,7 +82,9 @@ def sinusoidal(T, C):
 
 
 def pair_swap(d):
-    # x @ S turns every pair (x0, x1) into (-x1, x0). as a matmul it needs no new op
+    # x @ S turns every pair (x0, x1) into (-x1, x0). as a matmul it needs no new op.
+    # pairs neighbouring dims like roformer / gpt-j. llama's rotate_half pairs i with i + d/2
+    # instead, same rotation with the dims laid out differently, so don't mix the two
     S = np.zeros((d, d))
     for i in range(0, d, 2):
         S[i + 1, i] = -1
@@ -92,6 +94,7 @@ def pair_swap(d):
 
 def rope_tables(T_max, d, base=10000):
     # every pair of dims rotates at its own frequency, angle grows with position
+    assert d % 2 == 0, "rope needs an even head size"
     theta = base**(-np.arange(0, d, 2) / d)
     ang = np.arange(T_max)[:, None] * theta[None, :]
     cos = np.repeat(np.cos(ang), 2, axis=1)
