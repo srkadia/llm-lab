@@ -1,0 +1,46 @@
+# 02 · attention
+
+Attention and a full transformer block (multi-head attention, causal mask, LayerNorm, MLP, residuals, sinusoidal and RoPE positions), built on the autograd engine from 01. It didn't need any new engine ops.
+
+The question for this one: why does attention divide the scores by √d?
+
+![attention entropy, gradient through softmax and working learning rates vs head size](figures/sqrt_d.png)
+
+Every explanation says "so softmax doesn't saturate", and I wanted to see what that actually means. A score q·k is a sum of d terms, so without scaling its spread grows like √d: about 3 at d = 8, 32 at d = 1024. At d = 1024 each query puts ~96% of its weight on one random token before any training, and the gradient getting back through softmax is thousands of times smaller than with ÷√d (5.9e-5 vs 0.22 in this run, the exact ratio moved between ~3,000x and 9,000x across seeds). Dividing by d goes too far the other way and attention starts out completely uniform.
+
+What surprised me is that the unscaled version still learned. On a small task (find the token that matches the query, one head, plain SGD) it got to 99-100% as long as the learning rate was small enough. What breaks is the range of learning rates that work:
+
+| | d = 16 | d = 64 | d = 256 | d = 512 |
+|---|---|---|---|---|
+| ÷√d | 0.1 - 10 | 0.1 - 3 | 0.1 - 3 | 0.1 - 3 |
+| no scaling | 0.1 - 1 | 0.03 - 1 | 0.03 - 0.3 | 0.03 - 0.1 |
+| ÷d | 0.3 - 30 | 1 - 30 | 1 - 100 | not run |
+
+(Learning rates that reach at least 95% accuracy over the last 50 of 300 steps. 0.03 was the smallest I tried, so a window ending at 0.03 is the edge of the grid, not a real limit.)
+
+Without √d the largest working learning rate drops 10x between d = 16 and d = 512. With it, the same learning rate works at every size. That's the useful version of "it prevents saturation": you can tune a small model and make the heads bigger without retuning.
+
+Caveats: one task, one seed, plain SGD. Adam rescales gradients and probably hides part of this, I'll check that once AdamW exists in 03.
+
+## Files
+
+- `transformer.py`: attention, causal mask, multi-head, LayerNorm, GELU MLP, sinusoidal and RoPE, and `block()`. Imports the engine from `../01-autograd`
+- `test_transformer.py`: 14 checks. Gradchecks for every piece and a full block, LayerNorm against its closed form, multi-head against a slow per-head loop, no future leak, RoPE depending only on distance
+- `run.py`: the √d experiment, makes the chart. `--quick` skips the slow d = 512 runs
+- `notebooks/`: the same thing step by step ([01](notebooks/01_attention.ipynb) attention, [02](notebooks/02_transformer_block.ipynb) the block, [03](notebooks/03_experiment.ipynb) the experiment)
+
+## Notes
+
+- The causal mask is just a constant matrix of -inf added before softmax. exp(-inf) = 0, so masked positions get exactly zero weight and exactly zero gradient with the ops the engine already had. LayerNorm's square root is `** -0.5`, and RoPE's swap-each-pair step is a fixed matrix, so it's one matmul.
+- The leak test checks that earlier positions change by exactly 0.0 when a later token changes, not "close to 0".
+- My first "no mask means it leaks" demo showed almost no leak (1e-9). The random weights were too large, softmax was already saturated and every query only looked at one token. The √d problem showed up before I got to it. Normal init scale fixed the demo.
+- The first version of the experiment used 300 queries per point, and the d = 1024 gradient moved by about 7x between seeds. With 2,000 it's within about 2.5x, enough to trust "thousands of times smaller" but not the exact number.
+
+## Run
+
+```bash
+conda activate llm-lab
+python test_transformer.py
+python run.py            # ~8 min
+python run.py --quick    # ~3 min
+```
