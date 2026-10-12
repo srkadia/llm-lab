@@ -2,7 +2,7 @@
 why does attention divide the scores by sqrt(d)?
 compares no scaling, / sqrt(d) and / d, at init and in a small training test.
 
-python run.py           full run, ~10 min on a laptop cpu
+python run.py           full run, ~20 min on a laptop cpu
 python run.py --quick   skips the d=512 training runs, ~5 min
 writes figures/sqrt_d.png
 """
@@ -152,9 +152,6 @@ def plot(dims, init, results, train_dims):
     ax3.set_ylabel('learning rates that train (≥ 95% accuracy)')
     ax3.set_title('(c) Training: which learning rates work?', loc='left')
     ax3.legend(loc='upper center', bbox_to_anchor=(0.5, -0.17), ncol=2, fontsize=9) # below, 4 entries cover the bars otherwise
-    if (train_dims[-1], '÷d') not in results:
-        ax3.text(len(train_dims) - 1 + 0.15, 8, f'÷d and control\nnot run at d = {train_dims[-1]}',
-                 color=MUTED, fontsize=8, ha='left')
 
     fig.suptitle('Without √d, attention saturates and the usable learning rate shrinks as heads grow',
                  x=0.01, ha='left', fontsize=12)
@@ -182,19 +179,18 @@ if __name__ == '__main__':
     lrs = [0.03, 0.1, 0.3, 1, 3, 10, 30, 100]
     runs = [(d, name) for d in [16, 64, 256] for name in list(SCALES) + [CONTROL]]
     if not args.quick:
-        runs += [(512, 'no scaling'), (512, '÷√d')] # 512 is slow, only the two that matter most
+        runs += [(512, name) for name in list(SCALES) + [CONTROL]]
     train_dims = [16, 64, 256] + ([] if args.quick else [512])
 
     print("\ntraining sweep (accuracy over the last 50 steps)")
     results = {}
     t0 = time.perf_counter()
     for d, name in runs:
-        grid = lrs[:6] if d == 512 else lrs
         if name == CONTROL:
             scale, init_mult = 1.0, d**-0.25
         else:
             scale, init_mult = SCALES[name][0](d), 1.0
-        results[d, name] = {lr: train_retrieval(d, scale, lr, init_mult) for lr in grid}
+        results[d, name] = {lr: train_retrieval(d, scale, lr, init_mult) for lr in lrs}
         accs = '  '.join(f"{lr:g}:{a:.2f}" for lr, a in results[d, name].items())
         print(f"  d={d:4d} {name:22s} {accs}   [{time.perf_counter() - t0:.0f}s]", flush=True)
 

@@ -14,14 +14,14 @@ What surprised me is that the unscaled version still learned. On a small task (f
 |---|---|---|---|---|
 | ÷√d | 0.1 - 10 | 0.1 - 3 | 0.1 - 3 | 0.1 - 3 |
 | no scaling | 0.1 - 1 | 0.03 - 1 | 0.03 - 0.3 | 0.03 - 0.1 |
-| ÷d | 0.3 - 30 | 1 - 30 | 1 - 100 | not run |
-| no scaling, small init (control) | 0.03 - 1 | 0.03 - 1 | 0.03 - 0.3 | not run |
+| ÷d | 0.3 - 30 | 1 - 30 | 1 - 100 | 3 - 100 |
+| no scaling, small init (control) | 0.03 - 1 | 0.03 - 1 | 0.03 - 0.3 | 0.03 - 0.3 |
 
-(Learning rates that reach at least 95% accuracy over the last 50 of 300 steps. 0.03 was the smallest I tried, so a window ending at 0.03 is the edge of the grid, not a real limit.)
+(Learning rates that reach at least 95% accuracy over the last 50 of 300 steps. I tried 0.03 to 100, so a window that ends at 0.03 or 100 is the edge of the grid and might go further.)
 
 Without √d the largest working learning rate drops 10x between d = 16 and d = 512. With it, the same learning rate works at every size.
 
-My first explanation for that was the saturation, so I tested it. The last row is a control: no scaling, but Wq and Wk start smaller, so the scores start out exactly like ÷√d and nothing is saturated. Its window shrinks the same way anyway, so saturation isn't the reason. The scale factor also decides how far each update moves the scores, and without √d the same learning rate moves them further as d grows. ÷d is never saturated and drifts too, just in the other direction.
+My first explanation for that was the saturation, so I tested it. The last row is a control: no scaling, but Wq and Wk start smaller, so the scores start out exactly like ÷√d and nothing is saturated. Its window shrinks the same way as no scaling up to d = 256, and at 512 it's only one step better (0.3 vs 0.1), probably because the smaller weights also make each update smaller, which fits the next part. So saturation isn't the reason. The scale factor also decides how far each update moves the scores, and without √d the same learning rate moves them further as d grows. ÷d is never saturated and drifts too, just in the other direction.
 
 So the full answer: without √d, attention starts saturated, and each update moves the scores further as d grows, so the usable learning rate shrinks. √d keeps both independent of d, which is why you can tune a small model and make the heads bigger without retuning.
 
@@ -46,6 +46,6 @@ Caveats: one task, one seed, plain SGD. Adam rescales gradients and probably hid
 ```bash
 conda activate llm-lab
 python test_transformer.py
-python run.py            # ~10 min
+python run.py            # ~20 min
 python run.py --quick    # ~5 min
 ```
