@@ -1,6 +1,6 @@
 # 01 · autograd
 
-A small autograd engine on numpy (~190 lines), and a look at how much you can trust a gradient check.
+A small autograd engine on numpy (~220 lines), and a look at how much you can trust a gradient check.
 
 I started here instead of attention because everything after this needs gradients.
 
@@ -19,9 +19,9 @@ Theory says the best eps for central differences is around u^(1/3), where u is m
 
 ## Files
 
-- `autograd.py`: the engine. Tensor ops, broadcasting, batched matmul, softmax and cross entropy
+- `autograd.py`: the engine. Tensor ops, broadcasting, batched matmul, softmax, cross entropy, and the embedding lookup (added for 03)
 - `gradcheck.py`: finite difference checker, reused by later modules
-- `test_autograd.py`: 29 checks, every op against finite differences plus a few end to end ones
+- `test_autograd.py`: 31 checks, every op against finite differences plus a few end to end ones
 - `run.py`: the eps experiment, makes the chart
 - `notebooks/`: the same thing step by step, if you want the explanation ([01](notebooks/01_scalar_autograd.ipynb), [02](notebooks/02_tensor_autograd.ipynb), [03](notebooks/03_gradcheck_experiment.ipynb))
 
@@ -30,6 +30,7 @@ Theory says the best eps for central differences is around u^(1/3), where u is m
 - One of the tests gives gradcheck a deliberately wrong derivative and checks that it fails. Otherwise passing tests don't prove much.
 - Naive softmax on `[1000, 1001, 1002]` gives nan (exp overflows). Subtracting the max fixes it exactly, since softmax doesn't change when you shift all inputs by a constant.
 - First version of `backward()` was recursive and crashed at ~1000 ops (Python's recursion limit). It uses a stack now.
+- Added in 03: `(B, T, C) @ (C, D)` gets its own path in matmul, one flat 2-d matmul instead of B small ones plus a sum in the backward. A training step of the GPT in 03 went from 10.3 s to 2.4 s.
 - The spiral MLP in notebook 2 hit 99.3% train accuracy and I thought it was overfitting. Held out set: 99.0%.
 
 ## Run

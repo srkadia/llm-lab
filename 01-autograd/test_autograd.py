@@ -6,7 +6,7 @@ python test_autograd.py   (pytest works too)
 import sys
 import numpy as np
 
-from autograd import Tensor, softmax, cross_entropy
+from autograd import Tensor, softmax, cross_entropy, embedding
 from gradcheck import gradcheck, TOL
 
 rng = np.random.default_rng(42)
@@ -34,6 +34,7 @@ OPS = [
     ("matmul", lambda t: t[0] @ t[1], [rand(3, 4), rand(4, 5)]),
     ("matmul batched (2,3,4)@(4,5)", lambda t: t[0] @ t[1], [rand(2, 3, 4), rand(4, 5)]),
     ("matmul batched (2,3,4)@(2,4,5)", lambda t: t[0] @ t[1], [rand(2, 3, 4), rand(2, 4, 5)]),
+    ("matmul batched (2,2,3,4)@(4,5)", lambda t: t[0] @ t[1], [rand(2, 2, 3, 4), rand(4, 5)]),
     ("sum", lambda t: t[0].sum(), [rand(3, 4)]),
     ("sum axis=0", lambda t: t[0].sum(axis=0), [rand(3, 4)]),
     ("sum axis=1 keepdims", lambda t: t[0].sum(axis=1, keepdims=True), [rand(3, 4)]),
@@ -42,6 +43,7 @@ OPS = [
     ("transpose (2,0,1)", lambda t: t[0].transpose((2, 0, 1)), [rand(2, 3, 4)]),
     ("tanh(x @ W + b)", lambda t: (t[0] @ t[1] + t[2]).tanh(), [rand(5, 3), rand(3, 4), rand(4)]),
     ("softmax", lambda t: softmax(t[0]), [rand(6, 5)]),
+    ("embedding, repeated ids", lambda t: embedding(t[0], np.array([[0, 3, 3, 5], [3, 1, 0, 3]])), [rand(6, 4)]),
 ]
 
 

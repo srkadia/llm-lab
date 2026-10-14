@@ -92,6 +92,18 @@ class Tensor:
         other = other if isinstance(other, Tensor) else Tensor(other)
         # todo: 1-d @ 2-d isn't handled, haven't needed it yet
         assert self.data.ndim >= 2 and other.data.ndim >= 2
+        if self.data.ndim > 2 and other.data.ndim == 2:
+            # (B, T, C) @ (C, D) is the common case in a transformer. flatten to one big 2-d matmul,
+            # otherwise the backward does B separate matmuls and then sums them. ~4x faster for the gpt in 03
+            k, m = other.shape
+            a = self.data.reshape(-1, k)
+            out = Tensor((a @ other.data).reshape(*self.shape[:-1], m), (self, other), '@')
+            def _backward():
+                g = out.grad.reshape(-1, m)
+                self.grad += (g @ other.data.T).reshape(self.shape)
+                other.grad += a.T @ g
+            out._backward = _backward
+            return out
         out = Tensor(self.data @ other.data, (self, other), '@')
         def _backward():
             # swapaxes instead of .T so batched inputs (B, T, C) work too, attention needs this later
@@ -194,3 +206,14 @@ def cross_entropy(logits, targets):
     logprobs = logits - logits.exp().sum(axis=-1, keepdims=True).log()
     onehot = np.eye(logits.shape[-1])[targets]
     return -(logprobs * onehot).sum() / len(targets)
+
+
+def embedding(weight, idx):
+    # row lookup: weight (V, C), idx any int array -> (*idx.shape, C).
+    # the backward needs np.add.at. with weight.grad[idx] += g a token that shows up
+    # more than once only gets one of its grads, and nothing errors (03-gpt notebook 1)
+    out = Tensor(weight.data[idx], (weight,), 'embedding')
+    def _backward():
+        np.add.at(weight.grad, idx, out.grad)
+    out._backward = _backward
+    return out

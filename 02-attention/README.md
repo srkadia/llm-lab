@@ -23,9 +23,9 @@ Without √d the largest working learning rate drops 10x between d = 16 and d = 
 
 My first explanation for that was the saturation, so I tested it. The last row is a control: no scaling, but Wq and Wk start smaller, so the scores start out exactly like ÷√d and nothing is saturated. Its window shrinks the same way as no scaling up to d = 256, and at 512 it's only one step better (0.3 vs 0.1), probably because the smaller weights also make each update smaller, which fits the next part. So saturation isn't the reason. The scale factor also decides how far each update moves the scores, and without √d the same learning rate moves them further as d grows. ÷d is never saturated and drifts too, just in the other direction.
 
-So the full answer: without √d, attention starts saturated, and each update moves the scores further as d grows, so the usable learning rate shrinks. √d keeps both independent of d, which is why you can tune a small model and make the heads bigger without retuning.
+So the full answer: without √d, attention starts saturated, and each update moves the scores further as d grows, so the usable learning rate shrinks. √d keeps both independent of d, which is why, with SGD, you can tune a small model and make the heads bigger without retuning.
 
-Caveats: one task, one seed, plain SGD. Adam rescales gradients and probably hides part of this, I'll check that once AdamW exists in 03.
+Caveats: one task, one seed, plain SGD. I checked Adam in [03](../03-gpt/): √d still widens the range of learning rates that work, but the best learning rate no longer stays the same as the heads grow (it drops ~10x from d = 16 to 256), so the "tune small, scale up" part only holds for SGD.
 
 ## Files
 
