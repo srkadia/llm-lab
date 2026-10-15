@@ -25,7 +25,7 @@ My first explanation for that was the saturation, so I tested it. The last row i
 
 So the full answer: without √d, attention starts saturated, and each update moves the scores further as d grows, so the usable learning rate shrinks. √d keeps both independent of d, which is why, with SGD, you can tune a small model and make the heads bigger without retuning.
 
-Caveats: one task, one seed, plain SGD. I checked Adam in [03](../03-gpt/): √d still widens the range of learning rates that work, but the best learning rate no longer stays the same as the heads grow (it drops ~10x from d = 16 to 256), so the "tune small, scale up" part only holds for SGD.
+Caveats: one task, one seed, plain SGD. I checked Adam in [03](../03-gpt/): √d still widens the range of learning rates that work, but the whole range moves down ~10x from d = 16 to 256, so only a narrow band (0.003-0.01) works at every size, against 0.1-3 here with SGD. So with Adam "tune small, scale up" only works inside that band.
 
 ## Files
 

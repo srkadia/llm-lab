@@ -78,8 +78,8 @@ def train_step(P, opt, data, cfg, rng, lr, B=32, clip=1.0):
     return float(loss.data), norm
 
 
-def evaluate(P, data, cfg, n_batches=20, B=32, seed=123):
-    # same batches every time so the numbers are comparable
+def evaluate(P, data, cfg, n_batches=10, B=32, seed=123):
+    # same 10 batches every time (and the same ones as notebook 2) so the numbers are comparable
     rng = np.random.default_rng(seed)
     losses = []
     for _ in range(n_batches):
