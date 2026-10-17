@@ -39,6 +39,23 @@ Caveats: one model size, one seed, one book, 200-step runs. Removing the top dir
 | unigram | 3.10 |
 | bigram | 2.43 |
 | this GPT, 600 steps (notebook 2, ~20 min) | 1.67 |
+| this GPT, best of 5000 steps (`train.py`, step 2250) | 1.42 |
+
+The best val loss came at step 2250, about 18 passes over the book. After that it memorises: train loss keeps falling to 0.79 while val climbs back to 1.67 by step 5000. `train.py` keeps the best checkpoint, so that's the one `sample.py` uses. 0.82M parameters, half a million characters and no dropout, so it runs out of new things to learn early. Next time I'd train for ~2500 steps or add dropout.
+
+`python sample.py` (temperature 0.8):
+
+```
+Holmes gammed dried
+the fearsal wound from the fire. She him brought of him in the writing powerson.”
+
+“What will be an insigation don?”
+
+“Never. Jone was the old, the must rooms from who done upon the Eysander on
+presence, which was of his lens? Where you guide’s so.”
+```
+
+It gets the look of the book right (dialogue, nested quotes, line breaks, mostly real words), but not the meaning. At 600 steps it was mostly made-up words.
 
 ## Files
 
@@ -62,7 +79,7 @@ Caveats: one model size, one seed, one book, 200-step runs. Removing the top dir
 ```bash
 conda activate llm-lab
 python test_gpt.py
-python train.py          # ~3 h, saves checkpoints/gpt.npz
+python train.py          # ~2.7 h, saves checkpoints/gpt.npz
 python sample.py
 python run.py            # ~35 min
 python run.py --quick    # ~17 min
