@@ -3,7 +3,7 @@ how much faster does generation get with a kv cache, and how much memory does it
 the long contexts use the same architecture as 03 with random weights and a longer position table
 (the trained model only has 128 positions). part 1 checks that the weights don't change the speed.
 
-python run.py           ~2 min on a laptop cpu
+python run.py           ~2.5 min on a laptop cpu
 python run.py --quick   stops the cached sweep at 2048 and skips the 512-token run, ~1 min
 writes figures/kv_cache.png
 """
@@ -23,6 +23,7 @@ from gpt import init_gpt
 
 OUT = Path(__file__).parent / 'figures' / 'kv_cache.png'
 CTX = [16, 32, 64, 128, 256, 512, 1024, 2048] # without the cache it stops at 2048, 4096 needs ~0.5 GB per score matrix
+ROWS = 128 # the fairer uncached baseline: attention 128 query rows at a time, never all t x t scores
 CTX_LONG = [4096, 8192, 16384] # cached only
 
 # -----------------------------------------------------------------------------
@@ -37,8 +38,8 @@ def best_time(f, repeats=5):
         best = min(best, time.perf_counter() - t0)
     return best
 
-def time_uncached(p, cfg, ids, t, repeats=5):
-    return best_time(lambda: forward(p, ids[:, :t], cfg), repeats)
+def time_uncached(p, cfg, ids, t, repeats=5, rows=None):
+    return best_time(lambda: forward(p, ids[:, :t], cfg, rows=rows), repeats)
 
 def time_cached(p, cfg, ids, t, repeats=7):
     # fill t-1 positions once, then time decoding token t
@@ -73,9 +74,9 @@ def greedy(p, cfg, n, cached):
 # plotting
 
 BG, INK, INK2, MUTED, GRID, AXIS = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9', '#c3c2b7'
-BLUE, ORANGE = '#2a78d6', '#eb6834'
+BLUE, ORANGE, YELLOW = '#2a78d6', '#eb6834', '#eda100'
 
-def plot(t_unc, t_cac, mem_unc, mem_cache, model_mb, C):
+def plot(t_unc, t_blk, t_cac, mem_unc, mem_blk, mem_cache, model_mb, C):
     plt.rcParams.update({
         'figure.facecolor': BG, 'axes.facecolor': BG, 'savefig.facecolor': BG,
         'axes.edgecolor': AXIS, 'axes.labelcolor': INK2, 'text.color': INK, 'axes.titlecolor': INK,
@@ -85,15 +86,17 @@ def plot(t_unc, t_cac, mem_unc, mem_cache, model_mb, C):
     })
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 4.4))
     xs_u, xs_c = sorted(t_unc), sorted(t_cac)
-    ax1.plot(xs_u, [t_unc[t] * 1e3 for t in xs_u], 'o--', color=ORANGE, ms=5, label='without cache')
+    ax1.plot(xs_u, [t_unc[t] * 1e3 for t in xs_u], 'o--', color=ORANGE, ms=5, label='without cache, all scores at once')
+    ax1.plot(xs_u, [t_blk[t] * 1e3 for t in xs_u], 's:', color=YELLOW, ms=5, label=f'without cache, {ROWS} query rows at a time')
     ax1.plot(xs_c, [t_cac[t] * 1e3 for t in xs_c], 'o-', color=BLUE, ms=5, label='with KV cache')
     ax1.axvline(6 * C, color=MUTED, ls=':', lw=1)
-    ax1.text(6 * C * 1.1, 0.5, 't = 6C: attention starts\nto dominate a cached step', color=MUTED, fontsize=8, va='bottom')
+    ax1.text(6 * C * 1.1, 0.5, "t = 6C: attention's multiply-adds\nmatch the rest of a cached step", color=MUTED, fontsize=8, va='bottom')
     ax1.set_title('(a) Time per new token', loc='left')
     ax1.set_ylabel('ms (fastest of several runs)')
 
     xs = sorted(mem_unc)
-    ax2.plot(xs, [mem_unc[t] for t in xs], 'o--', color=ORANGE, ms=5, label='without cache: peak during one step')
+    ax2.plot(xs, [mem_unc[t] for t in xs], 'o--', color=ORANGE, ms=5, label='without cache, all scores at once: peak of one step')
+    ax2.plot(xs, [mem_blk[t] for t in xs], 's:', color=YELLOW, ms=5, label=f'without cache, {ROWS} rows at a time: peak of one step')
     ax2.plot(xs, [mem_cache[t] for t in xs], 'o-', color=BLUE, ms=5, label='the KV cache (kept)')
     ax2.axhline(model_mb, color=MUTED, ls=':', lw=1)
     ax2.text(xs[0], model_mb * 1.15, f"the model's weights, {model_mb:.2f} MB", color=MUTED, fontsize=8)
@@ -104,7 +107,7 @@ def plot(t_unc, t_cac, mem_unc, mem_cache, model_mb, C):
         ax.set_yscale('log')
         ax.set_xticks(ticks, [f'{x:,}' for x in ticks])
         ax.set_xlabel('context length (tokens)')
-        ax.legend(loc='upper left')
+        ax.legend(loc='upper left', fontsize=9)
     fig.suptitle("A KV cache turns each new token from a full pass over the context into one position's work",
                  x=0.01, ha='left', fontsize=12)
     plt.tight_layout()
@@ -144,11 +147,15 @@ if __name__ == '__main__':
     err = np.abs(full - forward_cached(model, ids[:, 1499:1500], cache, cfg_long)[0, -1]).max()
     print(f"  (cached vs uncached at context 1500: {err:.1e})")
     t_unc = {t: time_uncached(model, cfg_long, ids, t, 3 if t >= 1024 else 5) for t in CTX}
+    t_blk = {t: time_uncached(model, cfg_long, ids, t, 3 if t >= 1024 else 5, rows=ROWS) for t in CTX}
     t_cac = {t: time_cached(model, cfg_long, ids, t) for t in long_ctx}
+    print(f"  {'':14s} {'without cache':>13s} {f'without, {ROWS} rows':>17s} {'with cache':>11s}   speedup vs each")
     for t in long_ctx:
-        u = f"{t_unc[t] * 1e3:9.1f} ms" if t in t_unc else f"{'-':>12s}"
-        s = f"{t_unc[t] / t_cac[t]:5.0f}x" if t in t_unc else ''
-        print(f"  context {t:6d}  without {u}  with {t_cac[t] * 1e3:6.2f} ms  {s}", flush=True)
+        if t in t_unc:
+            print(f"  context {t:6d} {t_unc[t] * 1e3:10.1f} ms {t_blk[t] * 1e3:14.1f} ms {t_cac[t] * 1e3:8.2f} ms"
+                  f"   {t_unc[t] / t_cac[t]:5.0f}x {t_blk[t] / t_cac[t]:5.0f}x", flush=True)
+        else:
+            print(f"  context {t:6d} {'-':>13s} {'-':>17s} {t_cac[t] * 1e3:8.2f} ms", flush=True)
 
     if not args.quick:
         print("\npart 3: writing 512 tokens from scratch, greedy")
@@ -159,14 +166,18 @@ if __name__ == '__main__':
         print(f"  {tu:.1f} s without cache, {tc:.2f} s with ({tu / tc:.0f}x), same tokens: {a == b}")
 
     print("\npart 4: memory")
-    mem_unc, mem_cache = {}, {}
+    mem_unc, mem_blk, mem_cache = {}, {}, {}
     for t in CTX:
         mem_unc[t] = peak_mb(lambda: forward(model, ids[:, :t], cfg_long))
+        mem_blk[t] = peak_mb(lambda: forward(model, ids[:, :t], cfg_long, rows=ROWS))
         mem_cache[t] = 2 * cfg['L'] * t * C * 8 / 1e6
     model_mb = sum(v.size for v in trained.values()) * 8 / 1e6
+    same = np.abs(forward(model, ids[:, :2048], cfg_long) - forward(model, ids[:, :2048], cfg_long, rows=ROWS)).max()
+    print(f"  (all scores at once vs {ROWS} rows at a time, logits at 2048: {same:.1e})")
     for t in CTX:
-        print(f"  context {t:5d}  uncached step peak {mem_unc[t]:7.1f} MB   cache {mem_cache[t]:6.2f} MB")
+        print(f"  context {t:5d}  uncached peak: all scores {mem_unc[t]:7.1f} MB, {ROWS} rows {mem_blk[t]:6.1f} MB"
+              f"   cache {mem_cache[t]:6.2f} MB")
     print(f"  weights {model_mb:.2f} MB, the cache passes that at {model_mb * 1e6 / (2 * cfg['L'] * C * 8):.0f} tokens")
 
-    plot(t_unc, t_cac, mem_unc, mem_cache, model_mb, C)
+    plot(t_unc, t_blk, t_cac, mem_unc, mem_blk, mem_cache, model_mb, C)
     print(f"\nsaved {OUT}  [{time.perf_counter() - t0:.0f}s]")

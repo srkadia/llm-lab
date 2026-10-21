@@ -20,6 +20,12 @@ def test_forward_matches_engine():
     engine = gpt({k: Tensor(v) for k, v in p.items()}, IDX, cfg).data
     assert np.abs(forward(p, IDX, cfg) - engine).max() < 1e-12
 
+def test_blocked_attention_matches():
+    # doing attention a few query rows at a time is the same model, just less memory
+    full = forward(p, IDX, cfg)
+    for rows in (1, 7, 32):
+        assert np.abs(forward(p, IDX, cfg, rows=rows) - full).max() < 1e-12, rows
+
 def test_appending_does_not_change_the_past():
     # this is what makes caching legal at all
     a = forward(p, IDX[:, :40], cfg)

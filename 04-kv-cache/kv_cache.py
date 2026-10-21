@@ -35,28 +35,35 @@ def heads(a, H):
     return a.reshape(B, T, H, C // H).transpose(0, 2, 1, 3)
 
 
-def mlp_and_rest(x, p, i, a, v, cfg):
-    # everything in block i after the attention weights: the weighted values, the output
+def mlp_and_rest(x, p, i, att, cfg):
+    # everything in block i after attention: att is the weighted values (B, H, T, C/H). output
     # projection, then the mlp. shared by both forwards so they can't drift apart
     B, T, C = x.shape
     g = lambda k: p[f'h{i}.{k}']
-    x = x + (a @ v).transpose(0, 2, 1, 3).reshape(B, T, C) @ g('Wo')
+    x = x + att.transpose(0, 2, 1, 3).reshape(B, T, C) @ g('Wo')
     h = layer_norm(x, g('ln2_g'), g('ln2_b'))
     return x + gelu(h @ g('W1') + g('b1')) @ g('W2') + g('b2')
 
 
-def forward(p, idx, cfg):
-    # idx (B, T) -> logits (B, T, V). the whole sequence again, what 03's sample.py does
+def forward(p, idx, cfg, rows=None):
+    # idx (B, T) -> logits (B, T, V). the whole sequence again, what 03's sample.py does.
+    # rows: do attention that many query rows at a time. same logits, but it never holds all
+    # T x T scores at once (581 MB at T = 2048 in float64, see run.py)
     B, T = idx.shape
     H = cfg['H']
     x = p['wte'][idx] + p['wpe'][:T]
-    mask = np.triu(np.full((T, T), -np.inf), k=1)
+    rows = rows or T
     for i in range(cfg['L']):
         g = lambda k: p[f'h{i}.{k}']
         h = layer_norm(x, g('ln1_g'), g('ln1_b'))
         q, k, v = heads(h @ g('Wq'), H), heads(h @ g('Wk'), H), heads(h @ g('Wv'), H)
-        a = softmax(q @ k.transpose(0, 1, 3, 2) / math.sqrt(cfg['C'] // H) + mask)
-        x = mlp_and_rest(x, p, i, a, v, cfg)
+        att = np.empty_like(q)
+        for s in range(0, T, rows):
+            e = min(s + rows, T)
+            mask = np.triu(np.full((e - s, e), -np.inf), k=s + 1) # query row r sees keys 0..r
+            a = softmax(q[:, :, s:e] @ k[:, :, :e].transpose(0, 1, 3, 2) / math.sqrt(cfg['C'] // H) + mask)
+            att[:, :, s:e] = a @ v[:, :, :e]
+        x = mlp_and_rest(x, p, i, att, cfg)
     return layer_norm(x, p['lnf_g'], p['lnf_b']) @ p['wte'].T
 
 
@@ -83,7 +90,7 @@ def forward_cached(p, idx, cache, cfg):
         cache['v'][i, :, :, n:n + t] = heads(h @ g('Wv'), H)
         k, v = cache['k'][i, :, :, :n + t], cache['v'][i, :, :, :n + t]
         a = softmax(q @ k.transpose(0, 1, 3, 2) / math.sqrt(cfg['C'] // H) + mask)
-        x = mlp_and_rest(x, p, i, a, v, cfg)
+        x = mlp_and_rest(x, p, i, a @ v, cfg)
     cache['n'] = n + t
     return layer_norm(x, p['lnf_g'], p['lnf_b']) @ p['wte'].T
 
