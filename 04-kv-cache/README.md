@@ -12,15 +12,15 @@ The trained model only has 128 positions, so for longer contexts I used the same
 
 | context | without cache | with cache | speedup |
 |---|---|---|---|
-| 16 | ~2-4 ms | ~0.7-1.3 ms | ~3-4x |
+| 16 | ~2-4 ms | ~0.65-1.3 ms | ~3-4x |
 | 128 | ~15-24 ms | ~0.7-1.5 ms | ~16-23x |
-| 512 | ~125-185 ms | ~1-1.7 ms | ~105-130x |
-| 2,048 | ~1.5-1.7 s | ~2-3.3 ms | ~530-760x |
-| 16,384 | - | ~10-16 ms | |
+| 512 | ~125-185 ms | ~0.9-1.7 ms | ~105-140x |
+| 2,048 | ~1.4-1.7 s | ~1.9-3.3 ms | ~530-760x |
+| 16,384 | - | ~9.5-16 ms | |
 
-(Fastest of several tries per point, and the ranges cover five runs on the same laptop. Single timings move by up to 2x between runs, so read the shape, not the third digit.)
+(Fastest of several tries per point, and the ranges cover six runs on the same laptop. Single timings move by up to 2x between runs, so read the shape, not the third digit.)
 
-Without the cache each new token redoes every position and attention over every pair, so it gets slower faster and faster (about 3-3.5x per doubling by 2,048 tokens). With the cache it's flat at ~1 ms up to ~512 tokens and then grows linearly. The bend is where attention over the cache gets as expensive as the rest of the step, at t = 6C = 768 for this model. The measured speedups are always smaller than counting multiply-adds says (3-4x against 16x at 16 tokens), because a cached step is mostly a fixed ~1 ms of Python and numpy overhead at this size. Writing 512 tokens from scratch: ~28-34 s without, ~0.45-0.7 s with (~45-70x).
+Without the cache each new token redoes every position and attention over every pair, so it gets slower faster and faster (about 3-3.5x per doubling by 2,048 tokens). With the cache it's flat at ~1 ms up to ~512 tokens and then grows linearly. The bend is where attention over the cache gets as expensive as the rest of the step, at t = 6C = 768 for this model. The measured speedups are always smaller than counting multiply-adds says (3-4x against 16x at 16 tokens), because a cached step is mostly a fixed ~1 ms of Python and numpy overhead at this size. Writing 512 tokens from scratch: ~27-34 s without, ~0.45-0.7 s with (~45-70x).
 
 Memory surprised me. The cache is 8 KB per token here, so 16.8 MB at 2,048 tokens, and it passes the size of the model itself (6.55 MB) at 800 tokens. But without the cache, every step builds the attention scores for all pairs, and that peaks at 581 MB at 2,048 tokens, 35x the cache. So for one sequence the cache saves memory. The cost shows up with many sequences at once, because the cache is kept per sequence. Calculated, not measured: Llama-2-7B needs 0.5 MB per token in fp16, 2.1 GB for one 4,096-token sequence, so 8 of them need more memory than the model's weights. That's why Llama-2-70B uses grouped-query attention: 10x the parameters, but a smaller cache per token (0.33 MB) than the 7B.
 
