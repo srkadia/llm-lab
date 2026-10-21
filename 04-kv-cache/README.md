@@ -8,21 +8,21 @@ The question for this one: how much faster does generation get, and how much mem
 
 To write the next token you normally run the model on everything so far. But earlier positions never change when you append a token (the causal mask from 02), so you can keep their keys and values and only compute the new one. With the trained model from 03, the cached version gives the same logits to 2e-14 at every step up to its 128-character limit, and exactly the same text, greedy and sampled.
 
-The trained model only has 128 positions, so for longer contexts I used the same architecture with random weights. The output is nonsense, but the work per token and the memory don't depend on the weights: trained and random take the same time at the same context, within the noise of the timings.
+The trained model only has 128 positions, so for longer contexts I used the same architecture with random weights. The output is nonsense, but the work per token and the memory don't depend on the weights. Measured: without the cache, trained and random take the same time within a few percent (ratios 1.0-1.14). The ~1 ms cached steps are so short that their ratio jumps between 0.7 and 1.4 from run to run, in both directions, which is timing noise, not the weights.
 
 | context | without cache, all scores at once | without cache, 128 query rows at a time | with cache |
 |---|---|---|---|
-| 16 | ~2-4 ms | ~2.7 ms | ~0.65-1.3 ms |
-| 128 | ~15-24 ms | ~19 ms | ~0.7-1.5 ms |
-| 512 | ~125-185 ms | ~123 ms | ~0.9-1.7 ms |
-| 2,048 | ~1.4-1.7 s | ~1.06 s | ~1.9-3.3 ms |
+| 16 | ~2-4 ms | ~2.2-2.7 ms | ~0.65-1.3 ms |
+| 128 | ~15-24 ms | ~17-19 ms | ~0.7-1.5 ms |
+| 512 | ~125-185 ms | ~105-125 ms | ~0.9-1.7 ms |
+| 2,048 | ~1.4-1.7 s | ~0.95-1.06 s | ~1.85-3.3 ms |
 | 16,384 | - | - | ~9.5-16 ms |
 
-(Fastest of several tries per point. The first and last columns are ranges over seven runs on the same laptop, the middle one is from one run. Single timings move by up to 2x between runs, so read the shape, not the third digit.)
+(Fastest of several tries per point. The first and last columns are ranges over eight runs on the same laptop, the middle one over two. Single timings move by up to 2x between runs, so read the shape, not the third digit.)
 
-At 2,048 tokens the cache is ~530-760x faster than my first uncached forward, which builds all the attention scores at once. Against the fairer baseline, attention done 128 query rows at a time (same logits, see the memory part), it's ~430x.
+At 2,048 tokens the cache is ~530-800x faster than my first uncached forward, which builds all the attention scores at once. Against the fairer baseline, attention done 128 query rows at a time (same logits, see the memory part), it's ~430-510x.
 
-Without the cache each new token redoes every position and attention over every pair, so it gets slower faster and faster (about 3-3.5x per doubling by 2,048 tokens). With the cache it's flat at ~1 ms up to ~512 tokens and then grows linearly. Counting multiply-adds, the bend is where attention over the cache catches up with the rest of the step: t = 6C = 768 for this model. In measured time it comes later, since at 768 tokens attention only adds ~0.3 ms to a step that is ~0.7 ms of fixed overhead. The measured speedups are always smaller than counting multiply-adds says (3-4x against 16x at 16 tokens), because a cached step is mostly a fixed ~1 ms of Python and numpy overhead at this size. Writing 512 tokens from scratch: ~27-34 s without, ~0.45-0.7 s with (~45-70x).
+Without the cache each new token redoes every position and attention over every pair, so it gets slower faster and faster (about 3-3.5x per doubling by 2,048 tokens). With the cache it's flat at ~1 ms up to ~512 tokens and then grows linearly. Counting multiply-adds, the bend is where attention over the cache catches up with the rest of the step: t = 6C = 768 for this model. In measured time it comes later, since at 768 tokens attention only adds ~0.3 ms to a step that is ~0.7 ms of fixed overhead. The measured speedups are always smaller than counting multiply-adds says (3-4x against 16x at 16 tokens), because a cached step is mostly a fixed ~1 ms of Python and numpy overhead at this size. Writing 512 tokens from scratch: ~27-35 s without, ~0.45-0.7 s with (~45-80x).
 
 Memory. The cache is 8 KB per token here, so 16.8 MB at 2,048 tokens, and it passes the size of the model itself (6.55 MB) at 800 tokens. Without the cache nothing is kept between steps, but each step needs memory for attention. My first uncached forward built the scores for all t x t pairs at once and peaked at 581 MB at 2,048 tokens, which looked like 35x the cache. That's how I wrote it, not a cost of having no cache: doing attention 128 query rows at a time gives the same logits (to 1e-15), is faster, and peaks at ~61 MB, about 3.6x the cache. FlashAttention takes the same idea further on GPUs. So for one sequence the cache is still smaller than what a step without it needs, but not by much. The real cost shows up with many sequences at once, because the cache is kept for each of them. Calculated, not measured: Llama-2-7B needs 0.5 MB per token in fp16, 2.1 GB for one 4,096-token sequence, so 8 of them need more memory than the model's weights. That's why Llama-2-70B uses grouped-query attention: 10x the parameters, but a smaller cache per token (0.33 MB) than the 7B.
 
